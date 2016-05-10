@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 
-from cloudmonkey.config import config_file, read_config, config_fields
+from cloudmonkey import config
 from cloudmonkey.requester import monkeyrequest
-import os
 import sys
 import logging
 import argparse
 import base64
 logger = logging.getLogger(__name__)
+
 
 class CommandNotFoundError(Exception):
 
@@ -21,35 +21,35 @@ class CommandNotFoundError(Exception):
     def __unicode__(self):
         return unicode(str(self))
 
+
 class CloudStackRequester(object):
 
     def __init__(self, cfile):
         self.config_file = cfile
-        self.config_options = read_config(self.get_attr, self.set_attr,
-                                          self.config_file)
+        self.config_options = config.read_config(self.get_attr, self.set_attr,
+                                                 self.config_file)
 
     def get_attr(self, field):
         return getattr(self, field)
 
     def set_attr(self, field, value):
-        return setattr(self, field, value)  
+        return setattr(self, field, value)
 
     def make_request(self, command, args={}, isasync=False):
-        if self.projectid is not None:
-            args['projectid'] =  self.projectid
+        if getattr(self, 'projectid'):
+            args['projectid'] = self.projectid
         response, error = monkeyrequest(command, args, isasync,
                                         self.asyncblock, logger,
-                                        self.host, self.port,
-                                        self.apikey, self.secretkey,
-                                        self.timeout, self.protocol, self.path)
+                                        self.url, {'apikey': self.apikey, 'secretkey': self.secretkey},
+                                        self.timeout, self.expires)
         if error is not None:
             sys.stderr.write(error + '\n')
             sys.exit(1)
         return response
 
 
-config_fields['user']['projectid'] = ''
-cloudstack_request = CloudStackRequester(config_file)
+config.default_profile['projectid'] = ''
+cloudstack_request = CloudStackRequester(config.config_file)
 
 
 def _get_machines_data(search_item=None):
@@ -57,7 +57,7 @@ def _get_machines_data(search_item=None):
     machines = []
     virtual_machines = cloudstack_request.make_request('listVirtualMachines')
     search_result = []
-    if not 'virtualmachine' in virtual_machines['listvirtualmachinesresponse']:
+    if 'virtualmachine' not in virtual_machines['listvirtualmachinesresponse']:
         sys.stderr.write('Empty virtual machines list. Maybe wrong or empty projectid? \n')
         return machines
     for machine in virtual_machines['listvirtualmachinesresponse']['virtualmachine']:
@@ -71,11 +71,12 @@ def _get_machines_data(search_item=None):
         return search_result
     return machines
 
+
 def _list_networks(network_name=None):
     global cloudstack_request
     virtual_networks = cloudstack_request.make_request('listNetworks')
     networks = []
-    if not 'network' in virtual_networks['listnetworksresponse']:
+    if 'network' not in virtual_networks['listnetworksresponse']:
         sys.stderr.write('Empty networks list. Maybe wrong or empty projectid? \n')
         return networks
     for network in virtual_networks['listnetworksresponse']['network']:
@@ -85,11 +86,12 @@ def _list_networks(network_name=None):
         return [network for network in networks if network_name.lower() in network['name'].lower()]
     return networks
 
+
 def _list_os_templates(template_name=None):
     global cloudstack_request
     machine_templates = cloudstack_request.make_request('listTemplates', {'templatefilter': 'self'})
     templates = []
-    if not 'template' in machine_templates['listtemplatesresponse']:
+    if 'template' not in machine_templates['listtemplatesresponse']:
         sys.stderr.write('Empty templates list. Maybe wrong or empty projectid? \n')
         return templates
     for template in machine_templates['listtemplatesresponse']['template']:
@@ -100,11 +102,12 @@ def _list_os_templates(template_name=None):
         return [template for template in templates if template_name.lower() in template['name'].lower()]
     return templates
 
+
 def _list_service_offering(offering_name=None):
     global cloudstack_request
     vm_offerings = cloudstack_request.make_request('listServiceOfferings')
     service_offerings = []
-    if not 'serviceoffering' in vm_offerings['listserviceofferingsresponse']:
+    if 'serviceoffering' not in vm_offerings['listserviceofferingsresponse']:
         sys.stderr.write('Empty service offering list. Maybe wrong or empry projectid? \n')
         return service_offerings
     for vm in vm_offerings['listserviceofferingsresponse']['serviceoffering']:
@@ -113,10 +116,12 @@ def _list_service_offering(offering_name=None):
         return [offering for offering in service_offerings if offering_name.lower() in offering['name'].lower()]
     return service_offerings
 
+
 def list_machines(args):
     machines = _get_machines_data()
     for machine_name in sorted(set([machine['name'] for machine in machines])):
         print machine_name
+
 
 def get_machine_info(args):
     if len(args) == 0:
@@ -128,12 +133,14 @@ def get_machine_info(args):
     print "{:50s} {:18s} {:36s} {:36s} {:36s}".format("Display Name", "IP Address", "VM ID", "Offering", "Zone Name")
     for machine in sorted(machines, key=lambda k: k['zonename']):
         print "{:50s} {:18s} {:36s} {:36s} {:36s}".format(machine['name'], machine['ipaddress'],
-                                                   machine['id'], machine['offering'], machine['zonename'])
+                                                          machine['id'], machine['offering'], machine['zonename'])
+
 
 def list_networks(args):
     networks = _list_networks()
     for network in sorted(networks, key=lambda k: k['name']):
         print "{:50s} {}".format(network['name'], network['cidr'])
+
 
 def list_os_templates(args):
     templates = _list_os_templates()
@@ -142,17 +149,20 @@ def list_os_templates(args):
         print "{:35s} {:35s} {:36s} {:36s}".format(template['displaytext'], template['ostypename'],
                                                    template['id'], template['zonename'])
 
+
 def list_service_offerings(args):
     service_offering = _list_service_offering()
     print "{:25s} {:30s} {:30s}".format("Offering Name", "Description", "Id")
     for offering in sorted(service_offering, key=lambda k: k['name']):
         print "{:25s} {:30s} {:30s}".format(offering['name'], offering['displaytext'], offering['id'])
 
+
 def template_info(args):
     if len(args) == 0:
         sys.stderr.write(__file__ + " template_info <template_name>\n")
         sys.stderr.write("Missing network name\n")
-        sys.exit(2) 
+        sys.exit(2)
+
 
 def network_info(args):
     if len(args) == 0:
@@ -165,6 +175,7 @@ def network_info(args):
     for network in sorted(networks, key=lambda k: k['name']):
         print "{:50s} {:18s} {:36s} {:36s}".format(network['name'], network['cidr'],
                                                    network['id'], network['zonename'])
+
 
 def get_ips(args):
     if len(args) == 0:
@@ -181,6 +192,7 @@ def get_ips(args):
         sys.exit(0)
     print ' '.join(ips)
 
+
 def generate_template_parser(args):
     parser = argparse.ArgumentParser("generate-template")
     parser.add_argument("template", nargs=1, help="Template name")
@@ -191,6 +203,7 @@ def generate_template_parser(args):
     parser.add_argument("-s", "--disk_offering_size", default=None, required=False, help="Disk offering size - for custom disk size")
     parsed = parser.parse_args(args)
     return parsed
+
 
 def generate_template(args):
     global cloudstack_request
@@ -214,6 +227,7 @@ def generate_template(args):
             template_line += " size={}".format(disk_offering_size)
         print template_line
 
+
 def update_machine_parser(args):
     parser = argparse.ArgumentParser("update-machine")
     parser.add_argument("-i", "--machine_id", default=None, required=False, help="Only update this machine id")
@@ -223,20 +237,23 @@ def update_machine_parser(args):
     parsed = parser.parse_args(args)
     return parsed
 
+
 def b64_encoded(file_path):
-    with open (file_path, "r") as f:
-        data=f.read()
+    with open(file_path, "r") as f:
+        data = f.read()
         f.close
     encoded_file = base64.b64encode(data)
     return encoded_file
 
+
 def _update_machine_userdata(machine_id, user_data):
     global cloudstack_request
-    updated_machine = cloudstack_request.make_request('updateVirtualMachine', 
-                                                        {'id': machine_id, 'userdata': user_data})
+    updated_machine = cloudstack_request.make_request('updateVirtualMachine',
+                                                      {'id': machine_id, 'userdata': user_data})
     if machine_id in updated_machine['updatevirtualmachineresponse']['virtualmachine']['id']:
         machine_display_name = updated_machine['updatevirtualmachineresponse']['virtualmachine']['displayname']
         print "Userdata for virtual machine {} with {} ID updated".format(machine_display_name, machine_id)
+
 
 def update_machine_userdata(args):
     args = update_machine_parser(args)
@@ -256,6 +273,7 @@ def update_machine_userdata(args):
     if not changed_user_data:
         print "No machine found for {} id on {}".format(args.machine_id, args.machine_name)
 
+
 def available_commands():
     return {
         "list-machines": list_machines,
@@ -268,6 +286,7 @@ def available_commands():
         "generate-template": generate_template,
         "update-machine-userdata": update_machine_userdata
     }
+
 
 def get_command(name):
     command = available_commands().get(name)
@@ -289,7 +308,7 @@ def main(args=None):
         help_commands()
         return
     cmd, args = args[0], args[1:]
-    try: 
+    try:
         command = get_command(cmd)
         command(args)
     except CommandNotFoundError as e:
